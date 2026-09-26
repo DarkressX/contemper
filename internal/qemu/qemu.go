@@ -25,41 +25,56 @@ import (
 type archInfo struct {
 	systemBinary     string
 	machine          string
-	pflashCandidates []string
+	pflashCandidates []firmware
 	biosCandidates   []string
+}
+
+// firmware is a UEFI code image for pflash, optionally paired with the
+// variable-store template it ships with. When vars is set and exists, the
+// VM gets a writable copy of it as the second pflash unit, which is what
+// the distro OVMF/AAVMF builds expect. Homebrew's edk2 images boot
+// code-only.
+type firmware struct {
+	code string
+	vars string
 }
 
 var archTable = map[string]archInfo{
 	"arm64": {
 		systemBinary: "qemu-system-aarch64",
 		machine:      "virt",
-		pflashCandidates: []string{
-			"/opt/homebrew/share/qemu/edk2-aarch64-code.fd",
-			"/opt/homebrew/opt/qemu/share/qemu/edk2-aarch64-code.fd",
-			"/usr/local/share/qemu/edk2-aarch64-code.fd",
-			"/usr/local/opt/qemu/share/qemu/edk2-aarch64-code.fd",
-			"/usr/share/qemu-efi-aarch64/QEMU_EFI.fd",
-			"/usr/share/AAVMF/AAVMF_CODE.fd",
+		pflashCandidates: []firmware{
+			{code: "/opt/homebrew/share/qemu/edk2-aarch64-code.fd"},
+			{code: "/opt/homebrew/opt/qemu/share/qemu/edk2-aarch64-code.fd"},
+			{code: "/usr/local/share/qemu/edk2-aarch64-code.fd"},
+			{code: "/usr/local/opt/qemu/share/qemu/edk2-aarch64-code.fd"},
+			{code: "/usr/share/AAVMF/AAVMF_CODE.fd", vars: "/usr/share/AAVMF/AAVMF_VARS.fd"},
+			{code: "/usr/share/edk2/aarch64/QEMU_EFI-pflash.raw", vars: "/usr/share/edk2/aarch64/vars-template-pflash.raw"},
 		},
+		// QEMU_EFI.fd is not padded to the 64 MiB pflash size, so it can
+		// only be loaded with -bios.
 		biosCandidates: []string{
 			"/usr/share/qemu-efi-aarch64/QEMU_EFI.fd",
-			"/usr/share/AAVMF/AAVMF_CODE.fd",
 		},
 	},
 	"amd64": {
 		systemBinary: "qemu-system-x86_64",
 		machine:      "q35",
-		pflashCandidates: []string{
-			"/opt/homebrew/share/qemu/edk2-x86_64-code.fd",
-			"/opt/homebrew/opt/qemu/share/qemu/edk2-x86_64-code.fd",
-			"/usr/local/share/qemu/edk2-x86_64-code.fd",
-			"/usr/local/opt/qemu/share/qemu/edk2-x86_64-code.fd",
-			"/usr/share/OVMF/OVMF_CODE.fd",
-			"/usr/share/ovmf/OVMF.fd",
+		pflashCandidates: []firmware{
+			{code: "/opt/homebrew/share/qemu/edk2-x86_64-code.fd"},
+			{code: "/opt/homebrew/opt/qemu/share/qemu/edk2-x86_64-code.fd"},
+			{code: "/usr/local/share/qemu/edk2-x86_64-code.fd"},
+			{code: "/usr/local/opt/qemu/share/qemu/edk2-x86_64-code.fd"},
+			// Debian/Ubuntu (4M builds are the only ones on Ubuntu 24.04+).
+			{code: "/usr/share/OVMF/OVMF_CODE_4M.fd", vars: "/usr/share/OVMF/OVMF_VARS_4M.fd"},
+			{code: "/usr/share/OVMF/OVMF_CODE.fd", vars: "/usr/share/OVMF/OVMF_VARS.fd"},
+			// Fedora.
+			{code: "/usr/share/edk2/ovmf/OVMF_CODE.fd", vars: "/usr/share/edk2/ovmf/OVMF_VARS.fd"},
 		},
+		// Combined code+vars images, which can't be mapped read-only.
 		biosCandidates: []string{
-			"/usr/share/OVMF/OVMF_CODE.fd",
 			"/usr/share/ovmf/OVMF.fd",
+			"/usr/share/qemu/OVMF.fd",
 		},
 	},
 }
@@ -73,14 +88,26 @@ func firstExisting(paths []string) string {
 	return ""
 }
 
+func firstExistingFirmware(fws []firmware) (firmware, bool) {
+	for _, fw := range fws {
+		if firstExisting([]string{fw.code}) != "" {
+			return fw, true
+		}
+	}
+	return firmware{}, false
+}
+
 // Options configures Deploy.
 type Options struct {
 	Arch          string
 	DiskPath      string
 	DiskFormat    string // "qcow2" or "raw"
 	SerialLogPath string // if empty, a temp file is used
-	Expect        string
-	Timeout       time.Duration
+	// WorkDir holds per-boot scratch files (the writable UEFI variable
+	// store). If empty, firmware is booted code-only.
+	WorkDir string
+	Expect  string
+	Timeout time.Duration
 	// Progress, if non-nil, receives a "booting" line, the qemu argv
 	// (--verbose only), the live serial console, and a final match/error
 	// line.
@@ -99,16 +126,26 @@ func BuildArgs(opts Options) (args []string, err error) {
 }
 
 // accelInfo picks the acceleration backend: HVF on darwin, KVM if
-// /dev/kvm exists, TCG otherwise.
+// /dev/kvm can be opened (existing isn't enough: CI runners often have the
+// device without granting access to it), TCG otherwise.
 func accelInfo() (accel, cpu string) {
 	switch {
 	case runtime.GOOS == "darwin":
 		return "hvf", "host"
-	case fileExists("/dev/kvm"):
+	case kvmUsable():
 		return "kvm", "host"
 	default:
 		return "tcg", "max"
 	}
+}
+
+func kvmUsable() bool {
+	f, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0)
+	if err != nil {
+		return false
+	}
+	f.Close()
+	return true
 }
 
 func buildArgs(info archInfo, opts Options) (args []string, err error) {
@@ -119,8 +156,15 @@ func buildArgs(info archInfo, opts Options) (args []string, err error) {
 
 	args = append(args, "-m", "1G", "-smp", "2")
 
-	if pflash := firstExisting(info.pflashCandidates); pflash != "" {
-		args = append(args, "-drive", fmt.Sprintf("if=pflash,format=raw,readonly=on,file=%s", pflash))
+	if fw, ok := firstExistingFirmware(info.pflashCandidates); ok {
+		args = append(args, "-drive", fmt.Sprintf("if=pflash,format=raw,unit=0,readonly=on,file=%s", fw.code))
+		if fw.vars != "" && opts.WorkDir != "" && firstExisting([]string{fw.vars}) != "" {
+			vars := filepath.Join(opts.WorkDir, "efivars.fd")
+			if err := copyFile(fw.vars, vars); err != nil {
+				return nil, fmt.Errorf("copying UEFI variable store: %w", err)
+			}
+			args = append(args, "-drive", fmt.Sprintf("if=pflash,format=raw,unit=1,file=%s", vars))
+		}
 	} else if bios := firstExisting(info.biosCandidates); bios != "" {
 		args = append(args, "-bios", bios)
 	} else {
@@ -138,9 +182,12 @@ func buildArgs(info archInfo, opts Options) (args []string, err error) {
 	return args, nil
 }
 
-func fileExists(p string) bool {
-	_, err := os.Stat(p)
-	return err == nil
+func copyFile(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, 0o644)
 }
 
 // Deploy boots the disk described by opts under qemu. With opts.Expect
@@ -168,6 +215,15 @@ func Deploy(opts Options) error {
 		}
 		opts.SerialLogPath = f.Name()
 		f.Close()
+	}
+
+	if opts.WorkDir == "" {
+		dir, err := os.MkdirTemp("", "contemper-qemu-*")
+		if err != nil {
+			return fmt.Errorf("creating qemu work dir: %w", err)
+		}
+		defer os.RemoveAll(dir)
+		opts.WorkDir = dir
 	}
 
 	args, err := BuildArgs(opts)

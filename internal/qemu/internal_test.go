@@ -10,7 +10,7 @@ func TestBuildArgsWithFirmware(t *testing.T) {
 	pflash := writeFakeFile(t, "edk2-fake.fd")
 	info := archInfo{
 		machine:          "virt",
-		pflashCandidates: []string{pflash},
+		pflashCandidates: []firmware{{code: pflash}},
 		biosCandidates:   nil,
 	}
 	args, err := buildArgs(info, Options{
@@ -24,7 +24,7 @@ func TestBuildArgsWithFirmware(t *testing.T) {
 	joined := strings.Join(args, " ")
 	for _, want := range []string{
 		"-M virt",
-		"if=pflash,format=raw,readonly=on,file=" + pflash,
+		"if=pflash,format=raw,unit=0,readonly=on,file=" + pflash,
 		"file=/tmp/bundle/disk.qcow2,if=virtio,format=qcow2,snapshot=on",
 		"-nographic",
 		"-serial file:/tmp/serial.log",
@@ -41,7 +41,7 @@ func TestBuildArgsFallsBackToBIOS(t *testing.T) {
 	bios := writeFakeFile(t, "OVMF_CODE-fake.fd")
 	info := archInfo{
 		machine:          "q35",
-		pflashCandidates: []string{"/nonexistent/edk2.fd"},
+		pflashCandidates: []firmware{{code: "/nonexistent/edk2.fd"}},
 		biosCandidates:   []string{bios},
 	}
 	args, err := buildArgs(info, Options{DiskPath: "/tmp/d.qcow2", SerialLogPath: "/tmp/s.log"})
@@ -51,6 +51,31 @@ func TestBuildArgsFallsBackToBIOS(t *testing.T) {
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "-bios "+bios) {
 		t.Errorf("expected -bios fallback, got %q", joined)
+	}
+}
+
+func TestBuildArgsCopiesVarsTemplate(t *testing.T) {
+	code := writeFakeFile(t, "OVMF_CODE_4M.fd")
+	vars := writeFakeFile(t, "OVMF_VARS_4M.fd")
+	work := t.TempDir()
+	info := archInfo{
+		machine:          "q35",
+		pflashCandidates: []firmware{{code: code, vars: vars}},
+	}
+	args, err := buildArgs(info, Options{DiskPath: "/tmp/d.qcow2", SerialLogPath: "/tmp/s.log", WorkDir: work})
+	if err != nil {
+		t.Fatalf("buildArgs: %v", err)
+	}
+	joined := strings.Join(args, " ")
+	copied := work + "/efivars.fd"
+	if !strings.Contains(joined, "if=pflash,format=raw,unit=1,file="+copied) {
+		t.Errorf("expected writable vars pflash at %s, got %q", copied, joined)
+	}
+	if strings.Contains(joined, "file="+vars) {
+		t.Errorf("the vars template itself must not be handed to qemu: %q", joined)
+	}
+	if data, err := os.ReadFile(copied); err != nil || string(data) != "fake firmware" {
+		t.Errorf("vars copy = %q, %v", data, err)
 	}
 }
 
