@@ -1,0 +1,17 @@
+# Python tooling for the documentation site only; contemper itself is Go.
+# `uv run mkdocs serve` previews the docs locally.
+[project]
+name = "contemper-docs"
+version = "0"
+requires-python = ">=3.11"
+
+[dependency-groups]
+docs = [
+    # MkDocs 2.0 drops the plugin and theme system Material depends on.
+    "mkdocs>=1.6,<2",
+    "mkdocs-material>=9.7,<10",
+]
+
+[tool.uv]
+package = false
+default-groups = ["docs"]

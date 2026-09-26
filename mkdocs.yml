@@ -8,10 +8,6 @@ copyright: Copyright 2026 The contemper Authors · Apache License 2.0
 
 strict: true
 
-# The docs toolchain pins live next to the pages but aren't part of the site.
-exclude_docs: |
-  requirements.txt
-
 theme:
   name: material
   logo: assets/logo.svg
