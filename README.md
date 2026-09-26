@@ -165,6 +165,18 @@ discovers rather than bundles: `mkfs.ext4`, `debugfs`, `e2fsck` and
 executed on the host; these are the only subprocesses contemper runs,
 always as argv arrays with their own stderr passed through.
 
+## Testing
+
+`make test` runs the unit tests. Tests that need host tools (e2fsprogs,
+`qemu-img`) skip when those tools are missing.
+
+`make e2e` (`hack/e2e.sh`) is the end-to-end boot test. It builds
+`examples/alpine` for the host architecture with podman or docker,
+converts it with `--target qemu`, and boots it with
+`deploy --to local-qemu`. It passes once `contemper-boot-ok` appears on the
+serial console. It needs the host tools above plus `qemu-system-<arch>`
+and UEFI firmware. CI runs it on x86-64 Linux.
+
 ## Scope
 
 This is the MVP: `convert`, `deploy --to local-qemu`, two targets

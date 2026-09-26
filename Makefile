@@ -22,7 +22,7 @@ example:
 	podman build -t contemper-example:dev examples/alpine
 
 e2e:
-	@echo "e2e is environment-specific; run it from outside the repo (see dev notes)."
+	./hack/e2e.sh
 
 clean:
 	rm -rf bin _out
