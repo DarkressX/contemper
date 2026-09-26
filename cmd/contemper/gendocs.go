@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -19,6 +20,9 @@ func newGenDocsCmd() *cobra.Command {
 		Hidden: true,
 		Args:   cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := os.MkdirAll(filepath.Dir(args[0]), 0o755); err != nil {
+				return err
+			}
 			return os.WriteFile(args[0], cliReference(cmd.Root()), 0o644)
 		},
 	}
