@@ -30,6 +30,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newConvertCmd())
 	root.AddCommand(newDeployCmd())
 	root.AddCommand(newVersionCmd())
+	root.AddCommand(newGenDocsCmd())
 
 	return root
 }
