@@ -1,0 +1,93 @@
+site_name: contemper
+site_description: Build bootable VM images from container images.
+site_url: https://contemper-project.github.io/contemper/
+repo_url: https://github.com/contemper-project/contemper
+repo_name: contemper-project/contemper
+edit_uri: edit/main/docs/
+copyright: Copyright 2026 The contemper Authors · Apache License 2.0
+
+strict: true
+
+# The docs toolchain pins live next to the pages but aren't part of the site.
+exclude_docs: |
+  requirements.txt
+
+theme:
+  name: material
+  logo: assets/logo.svg
+  favicon: assets/favicon.svg
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.footer
+    - navigation.top
+    - content.code.copy
+    - search.highlight
+
+extra_css:
+  - stylesheets/brand.css
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Guide:
+      - Authoring an image: guide/authoring.md
+      - How conversion works: guide/how-it-works.md
+      - The disk and VM lifecycle: guide/disk.md
+      - Targets: guide/targets.md
+      - Support images: guide/support-images.md
+      - Deploying locally: guide/deploying.md
+      - Multi-architecture: guide/multi-arch.md
+      - In a CI pipeline: guide/ci.md
+  - Reference:
+      - CLI: reference/cli.md
+      - Source references: reference/sources.md
+      - Bundle manifest: reference/bundle.md
+      - Host tools: reference/host-tools.md
+  - Design:
+      - Framing: design/index.md
+      - Principles: design/principles.md
+      - Image config: design/image-config.md
+      - Support image resolution: design/support-images.md
+      - Root filesystem: design/root-filesystem.md
+      - Lifecycle phases and the bundle: design/phases.md
+      - Volumes and providers: design/volumes-and-providers.md
+      - Rejected approaches: design/rejected.md
+      - Open questions: design/open-questions.md
+      - Roadmap: design/roadmap.md
+  - Comparison: comparison.md

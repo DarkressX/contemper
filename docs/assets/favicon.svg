@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="contemper">
+  <title>contemper</title>
+  <rect width="1024" height="1024" rx="224" fill="#16212B"/>
+  <g stroke="#F2A65A" fill="none">
+    <ellipse cx="512" cy="348" rx="252" ry="60" stroke-width="22"/>
+    <ellipse cx="512" cy="512" rx="252" ry="60" stroke-width="30"/>
+  </g>
+  <ellipse cx="512" cy="680" rx="252" ry="62" fill="#F2A65A"/>
+</svg>

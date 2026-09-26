@@ -1,0 +1,87 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/**
+      - mkdocs.yml
+      - cmd/contemper/**
+      - .github/workflows/docs.yml
+  pull_request:
+    paths:
+      - docs/**
+      - mkdocs.yml
+      - cmd/contemper/**
+      - .github/workflows/docs.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: docs/requirements.txt
+      - name: Install MkDocs
+        run: pip install -r docs/requirements.txt
+      # The CLI reference is generated from the command tree, never committed.
+      - name: Generate CLI reference
+        run: go run ./cmd/contemper gen-docs docs/reference/cli.md
+      - name: Build site
+        run: mkdocs build --strict
+      - name: Upload site for preview
+        uses: actions/upload-artifact@v7
+        with:
+          name: docs-site
+          path: site/
+          retention-days: 14
+      - name: Explain how to preview
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ### Docs preview
+          Download the **docs-site** artifact from this run, unzip it, and serve it
+          locally (pages link by directory, so opening `index.html` directly won't
+          navigate):
+
+          ```sh
+          unzip docs-site.zip -d docs-site && python3 -m http.server -d docs-site 8000
+          ```
+
+          Then open http://localhost:8000/.
+          EOF
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && !github.event.repository.private
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site/
+
+  # Publishes to https://contemper-project.github.io/contemper/. Skipped while
+  # the repository is private (GitHub Pages needs a public repo on this plan).
+  # Requires Settings → Pages → Source: "GitHub Actions".
+  deploy:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && !github.event.repository.private
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

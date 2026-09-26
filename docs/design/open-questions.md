@@ -1,0 +1,43 @@
+# Open questions
+
+**Deployment and volume metadata, the largest open item.** Volume support
+needs metadata to travel with the image, and something has to act on it.
+Leaving that to cloud providers can't bootstrap, since it asks a provider
+to support a format with no users; a `contemper deploy` with provider
+glue can, at the cost of scope. These aren't really alternatives: the
+metadata format has to be designed either way, and only its first
+consumer differs. The [bundle manifest](../reference/bundle.md) is that
+format's starting point, anchored on primitives that already exist
+(`VOLUME`, `EXPOSE`, `HEALTHCHECK`), with new declarations only for what
+those can't express, such as size, filesystem and persistence.
+
+Whether OpenTofu is involved is undecided. Embedding it has a hard
+blocker (its core lives under `internal/`, so it can't be imported as a
+library without forking), leaving bundling a large binary or discovering
+`tofu` on `PATH`. Also open: who owns state.
+
+**Multi-architecture sources.** If the source is a multi-arch index,
+contemper could build every architecture present, require an explicit
+`--arch`, or default to the host's. It currently defaults to the host's;
+this is a UX question more than a technical one.
+
+**Provenance.** Beyond the bundle manifest, whether contemper should
+attach provenance to published output. If it does, an OCI referrer is
+the natural shape, since cosign and oras can inspect it without
+contemper-specific tooling.
+
+**Support image tag pinning.** Floating tags keep support images easy to
+update but make builds non-reproducible. Floating by default, with the
+resolved digests recorded in the bundle, is the likely compromise.
+
+**Blessed base images.** Curated base images that already satisfy the
+kernel, initrd and init requirements would remove the main sharp edge in
+authoring. They must be a convenience, never a requirement, since
+accepting arbitrary bases is a deliberate difference from bootc. Also
+undecided: contemper-maintained or merely contemper-documented, since
+maintaining a family of base images is an ongoing commitment unlike
+maintaining a CLI.
+
+**Incus boot order.** Whether Incus's OVMF build tries network boot
+before the fallback path, which would show up as a boot delay rather than
+a failure. Unverified.

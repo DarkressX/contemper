@@ -1,0 +1,47 @@
+# The disk and VM lifecycle
+
+## Layout
+
+Two partitions on a GPT disk, 1 MiB-aligned:
+
+| # | Partition | Contents |
+| --- | --- | --- |
+| 1 | EFI system partition, 128 MiB, FAT32 | the UKI at `EFI/BOOT/BOOTAA64.EFI` (arm64) or `EFI/BOOT/BOOTX64.EFI` (x86-64) |
+| 2 | root, ext4, label `contemper-root` | your merged filesystem, writable |
+
+The UKI sits at the UEFI fallback path for the architecture, so the
+firmware finds it without any boot entry being registered on the host.
+
+The root comes last, so growing it is the ordinary `growpart` plus
+`resize2fs` operation any cloud image uses. No special configuration,
+no union filesystem, nothing for your initrd to assemble: the kernel
+mounts the root partition and boot is over.
+
+The root partition is sized `max(1 GiB, 1.5 × content + 256 MiB)` by
+default. Override it with `--root-size`, for example `--root-size 4GiB`.
+
+## State behaves the way a container's does
+
+| Container | Your VM | Root filesystem |
+| --- | --- | --- |
+| `restart` | reboot | kept |
+| `stop` / `start` | shutdown / power-on | kept |
+| `rm` + `run`, same volumes | replace the instance | reset |
+| volume mounts | attached persistent volumes | untouched throughout |
+
+So changes made inside a running VM, including anything you install
+with its package manager, survive reboots and shutdowns, and are gone
+when you redeploy. Persistent data belongs on an attached volume, where
+it survives all of it.
+
+This comes from the disk being replaced on redeploy, not from any
+layering trick, which is why the root is an ordinary filesystem you can
+read, write and grow with ordinary tools.
+
+!!! note "Snapshots and clones"
+    A VM's state lives in its disk, so its lifetime follows the disk.
+    Snapshotting or cloning a disk copies that state with it, which has
+    no clean container analogue; the nearest thing is `docker commit`.
+
+The reasoning behind a plain writable root, rather than a read-only
+squashfs with an overlay, is in [Design: root filesystem](../design/root-filesystem.md).

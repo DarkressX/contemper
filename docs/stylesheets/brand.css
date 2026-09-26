@@ -1,0 +1,16 @@
+/* contemper brand: slate #16212B with amber #F2A65A (see the brand notes). */
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #16212B;
+  --md-primary-fg-color--light: #2A3845;
+  --md-primary-fg-color--dark: #0E151C;
+  --md-accent-fg-color: #A85A12;
+  --md-typeset-a-color: #A85A12;
+}
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #16212B;
+  --md-primary-fg-color--light: #2A3845;
+  --md-primary-fg-color--dark: #0E151C;
+  --md-accent-fg-color: #F2A65A;
+  --md-typeset-a-color: #F2A65A;
+  --md-default-bg-color: #0E151C;
+}
