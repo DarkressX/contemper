@@ -1,0 +1,351 @@
+// Package disk builds the on-disk artifacts of a contemper bundle: the
+// ext4 root filesystem (via mkfs.ext4 + debugfs, never by extracting
+// image content to the host filesystem under its real name), the FAT32
+// ESP (via go-diskfs), the GPT layout tying them together, and the
+// qcow2 conversion.
+package disk
+
+import (
+	"archive/tar"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path"
+	"sort"
+	"strings"
+
+	"github.com/contemper-project/contemper/internal/hostenv"
+	"github.com/contemper-project/contemper/internal/progress"
+	"github.com/contemper-project/contemper/internal/rootfs"
+)
+
+// debugfs error markers: debugfs exits 0 even when an individual scripted
+// command fails, so a failure is detected by scanning its output for one
+// of these (found empirically: see hack notes in the MVP plan) - and,
+// authoritatively, by running e2fsck -fn on the result afterward.
+var debugfsErrorMarkers = []string{
+	"File not found",
+	"not found by ext2_lookup",
+	"Unbalanced quotes",
+	"Usage:",
+	"Could not allocate",
+	"already exists",
+	"Filename too long",
+}
+
+// Ext4Options configures PopulateExt4.
+type Ext4Options struct {
+	Label     string
+	SizeBytes int64
+	// Progress, if non-nil, receives --verbose host-tool argv lines.
+	Progress *progress.Reporter
+	// Stage, if non-nil, receives a live "files done/total" readout
+	// while the debugfs script is being built (TTY progress mode).
+	Stage *progress.Stage
+}
+
+// PopulateExt4 creates an ext4 image at imgPath, sized and labeled per
+// opts, and populates it from rfs. It returns non-fatal warnings (e.g.
+// "xattrs were skipped").
+func PopulateExt4(rfs *rootfs.Rootfs, imgPath string, opts Ext4Options) ([]string, error) {
+	mkfsPath, err := hostenv.Required("mkfs.ext4")
+	if err != nil {
+		return nil, err
+	}
+	debugfsPath, err := hostenv.Required("debugfs")
+	if err != nil {
+		return nil, err
+	}
+	e2fsckPath, err := hostenv.Required("e2fsck")
+	if err != nil {
+		return nil, err
+	}
+
+	f, err := os.Create(imgPath)
+	if err != nil {
+		return nil, fmt.Errorf("creating %s: %w", imgPath, err)
+	}
+	if err := f.Truncate(opts.SizeBytes); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("sizing %s to %d bytes: %w", imgPath, opts.SizeBytes, err)
+	}
+	if err := f.Close(); err != nil {
+		return nil, err
+	}
+
+	mkfsArgs := []string{"-F", "-L", opts.Label, "-E", "root_owner=0:0", imgPath}
+	opts.Progress.VerboseCmd(mkfsPath, mkfsArgs)
+	if out, err := runCmd(mkfsPath, mkfsArgs...); err != nil {
+		return nil, fmt.Errorf("mkfs.ext4: %w\n%s", err, out)
+	}
+
+	payloadDir, err := os.MkdirTemp("", "contemper-ext4-payload-")
+	if err != nil {
+		return nil, fmt.Errorf("creating payload dir: %w", err)
+	}
+	defer os.RemoveAll(payloadDir)
+
+	script, warnings, err := buildDebugfsScript(rfs, payloadDir, opts.Stage)
+	if err != nil {
+		return nil, err
+	}
+
+	scriptPath := path.Join(payloadDir, "script.debugfs")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		return nil, fmt.Errorf("writing debugfs script: %w", err)
+	}
+
+	debugfsArgs := []string{"-w", "-f", scriptPath, imgPath}
+	opts.Progress.VerboseCmd(debugfsPath, debugfsArgs)
+	out, runErr := runCmd(debugfsPath, debugfsArgs...)
+	for _, marker := range debugfsErrorMarkers {
+		if strings.Contains(out, marker) {
+			return nil, fmt.Errorf("debugfs reported an error while populating %s (matched %q):\n%s", imgPath, marker, out)
+		}
+	}
+	if runErr != nil {
+		return nil, fmt.Errorf("debugfs: %w\n%s", runErr, out)
+	}
+
+	fsckArgs := []string{"-fn", imgPath}
+	opts.Progress.VerboseCmd(e2fsckPath, fsckArgs)
+	fsckOut, fsckErr := runCmd(e2fsckPath, fsckArgs...)
+	if fsckErr != nil {
+		return nil, fmt.Errorf("e2fsck -fn found problems in %s:\n%s", imgPath, fsckOut)
+	}
+
+	return warnings, nil
+}
+
+// runCmd runs an argv-array subprocess and returns its combined output.
+func runCmd(name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// modeBits returns the ext4 st_mode value (type bits | permission bits)
+// for a tar header, so `sif ... mode ...` never drops the file's type.
+func modeBits(hdr *tar.Header) uint32 {
+	perm := uint32(hdr.Mode) & 07777
+	var typeBits uint32
+	switch hdr.Typeflag {
+	case tar.TypeDir:
+		typeBits = 040000
+	case tar.TypeSymlink:
+		typeBits = 0120000
+	case tar.TypeChar:
+		typeBits = 020000
+	case tar.TypeBlock:
+		typeBits = 060000
+	case tar.TypeFifo:
+		typeBits = 010000
+	default: // tar.TypeReg and friends
+		typeBits = 0100000
+	}
+	return typeBits | perm
+}
+
+// hasXattrs reports whether hdr carries any SCHILY.xattr.* PAX record,
+// the convention GNU tar (and Go's archive/tar) uses for xattrs.
+func hasXattrs(hdr *tar.Header) bool {
+	for k := range hdr.PAXRecords {
+		if strings.HasPrefix(k, "SCHILY.xattr.") {
+			return true
+		}
+	}
+	return false
+}
+
+// buildDebugfsScript writes every regular file's content under
+// payloadDir/fNNNNNN (a name that cannot collide with, or be confused
+// for, the image's own paths), and returns a debugfs script that
+// recreates the full merged rootfs - content, ownership, mode, mtime,
+// symlinks, device nodes and hardlinks - inside an ext4 image.
+func buildDebugfsScript(rfs *rootfs.Rootfs, payloadDir string, stage *progress.Stage) (string, []string, error) {
+	paths := make([]string, 0, len(rfs.Index))
+	for p := range rfs.Index {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+
+	// A hardlink's target inode needs its final links_count set once, to
+	// 1 (itself) plus however many TypeLink entries point at it.
+	linksCount := map[string]int{}
+	for _, p := range paths {
+		e := rfs.Index[p]
+		if e.Header.Typeflag == tar.TypeLink {
+			target := normalize(e.Header.Linkname)
+			if linksCount[target] == 0 {
+				linksCount[target] = 1
+			}
+			linksCount[target]++
+		}
+	}
+
+	var b strings.Builder
+	var warnings []string
+	warnedXattrs := false
+	fileN := 0
+
+	// Hardlinks are emitted in a second pass, after every other entry
+	// (in particular, every regular file that might be a hardlink's
+	// target) has already been created.
+	var hardlinks []string
+
+	for i, p := range paths {
+		if stage != nil && i%64 == 0 {
+			stage.SetProgressCount(int64(i), int64(len(paths)), "files")
+		}
+		e := rfs.Index[p]
+		hdr := e.Header
+
+		if !warnedXattrs && hasXattrs(hdr) {
+			warnings = append(warnings, "one or more files carry extended attributes; contemper does not preserve xattrs in the ext4 root")
+			warnedXattrs = true
+		}
+
+		qp, err := quoteArg(p)
+		if err != nil {
+			return "", nil, fmt.Errorf("%s: %w", p, err)
+		}
+
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			fmt.Fprintf(&b, "mkdir %s\n", qp)
+			writeAttrs(&b, qp, hdr)
+
+		case tar.TypeReg:
+			hostPath, err := writePayload(rfs, e, payloadDir, fileN)
+			if err != nil {
+				return "", nil, fmt.Errorf("%s: %w", p, err)
+			}
+			fileN++
+			qh, err := quoteArg(hostPath)
+			if err != nil {
+				return "", nil, err
+			}
+			fmt.Fprintf(&b, "write %s %s\n", qh, qp)
+			writeAttrs(&b, qp, hdr)
+
+		case tar.TypeSymlink:
+			qt, err := quoteArg(hdr.Linkname)
+			if err != nil {
+				return "", nil, fmt.Errorf("%s: symlink target: %w", p, err)
+			}
+			fmt.Fprintf(&b, "symlink %s %s\n", qp, qt)
+			writeAttrs(&b, qp, hdr)
+
+		case tar.TypeLink:
+			target := normalize(hdr.Linkname)
+			qt, err := quoteArg(target)
+			if err != nil {
+				return "", nil, fmt.Errorf("%s: hardlink target: %w", p, err)
+			}
+			hardlinks = append(hardlinks, fmt.Sprintf("ln %s %s\n", qt, qp))
+
+		case tar.TypeChar, tar.TypeBlock, tar.TypeFifo:
+			dir, base := splitPath(p)
+			qd, err := quoteArg(dir)
+			if err != nil {
+				return "", nil, err
+			}
+			qb, err := quoteArg(base)
+			if err != nil {
+				return "", nil, err
+			}
+			var t string
+			switch hdr.Typeflag {
+			case tar.TypeChar:
+				t = "c"
+			case tar.TypeBlock:
+				t = "b"
+			case tar.TypeFifo:
+				t = "p"
+			}
+			fmt.Fprintf(&b, "cd %s\n", qd)
+			if t == "p" {
+				fmt.Fprintf(&b, "mknod %s %s\n", qb, t)
+			} else {
+				fmt.Fprintf(&b, "mknod %s %s %d %d\n", qb, t, hdr.Devmajor, hdr.Devminor)
+			}
+			b.WriteString("cd \"/\"\n")
+			writeAttrs(&b, qp, hdr)
+
+		default:
+			warnings = append(warnings, fmt.Sprintf("%s: unsupported tar entry type %d, skipped", p, hdr.Typeflag))
+		}
+	}
+
+	for _, line := range hardlinks {
+		b.WriteString(line)
+	}
+
+	for p, n := range linksCount {
+		qp, err := quoteArg(p)
+		if err != nil {
+			return "", nil, err
+		}
+		fmt.Fprintf(&b, "sif %s links_count %d\n", qp, n)
+	}
+
+	return b.String(), warnings, nil
+}
+
+func writeAttrs(b *strings.Builder, quotedPath string, hdr *tar.Header) {
+	fmt.Fprintf(b, "sif %s mode 0%o\n", quotedPath, modeBits(hdr))
+	fmt.Fprintf(b, "sif %s uid %d\n", quotedPath, hdr.Uid)
+	fmt.Fprintf(b, "sif %s gid %d\n", quotedPath, hdr.Gid)
+	fmt.Fprintf(b, "sif %s mtime %d\n", quotedPath, hdr.ModTime.Unix())
+}
+
+// writePayload copies a regular file's content to payloadDir under an
+// index-numbered name, never its real name, and returns that host path.
+func writePayload(rfs *rootfs.Rootfs, e *rootfs.Entry, payloadDir string, n int) (string, error) {
+	rc, err := rfs.Open(e)
+	if err != nil {
+		return "", err
+	}
+	defer rc.Close()
+
+	hostPath := path.Join(payloadDir, fmt.Sprintf("f%06d", n))
+	out, err := os.Create(hostPath)
+	if err != nil {
+		return "", err
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, rc); err != nil {
+		return "", fmt.Errorf("writing payload for %s: %w", e.Path, err)
+	}
+	return hostPath, nil
+}
+
+// quoteArg quotes s for a debugfs script. debugfs supports double-quoted
+// filespecs but no escape sequence within them, so a name containing a
+// double quote or a newline cannot be represented at all.
+func quoteArg(s string) (string, error) {
+	if strings.ContainsRune(s, '"') {
+		return "", fmt.Errorf("path contains a double quote, which a debugfs script cannot represent: %q", s)
+	}
+	if strings.ContainsAny(s, "\n\r") {
+		return "", fmt.Errorf("path contains a newline, which a debugfs script cannot represent: %q", s)
+	}
+	return `"` + s + `"`, nil
+}
+
+func normalize(name string) string {
+	name = strings.TrimPrefix(name, "./")
+	if !strings.HasPrefix(name, "/") {
+		name = "/" + name
+	}
+	return path.Clean(name)
+}
+
+// splitPath splits an absolute path into its parent directory (never
+// empty; "/" for a top-level entry) and base name.
+func splitPath(p string) (dir, base string) {
+	dir, base = path.Split(strings.TrimSuffix(p, "/"))
+	dir = path.Clean(dir)
+	return dir, base
+}

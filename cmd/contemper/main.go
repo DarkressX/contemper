@@ -1,0 +1,46 @@
+// Command contemper converts a contemper-ready OCI image into a bootable
+// VM disk bundle, and can deploy that bundle locally for testing.
+package main
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/spf13/cobra"
+)
+
+// version is set at build time via -ldflags "-X main.version=...".
+var version = "dev"
+
+func main() {
+	if err := newRootCmd().Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, "contemper:", err)
+		os.Exit(1)
+	}
+}
+
+func newRootCmd() *cobra.Command {
+	root := &cobra.Command{
+		Use:           "contemper",
+		Short:         "Convert OCI images into bootable VM disk bundles",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+	}
+
+	root.AddCommand(newConvertCmd())
+	root.AddCommand(newDeployCmd())
+	root.AddCommand(newVersionCmd())
+
+	return root
+}
+
+func newVersionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print the contemper version",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Fprintln(cmd.OutOrStdout(), version)
+			return nil
+		},
+	}
+}

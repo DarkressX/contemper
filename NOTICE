@@ -1,0 +1,26 @@
+contemper
+Copyright 2026 The contemper Authors
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+---
+
+contemper embeds two binaries it does not own the copyright to:
+
+  internal/uki/stubs/linuxaa64.efi.stub
+  internal/uki/stubs/linuxx64.efi.stub
+
+These are the systemd-stub UEFI stub loaders, built and distributed by
+the Debian Project as part of the systemd-boot-efi package
+(https://packages.debian.org/source/trixie/systemd), version
+257.13-1~deb13u1. Upstream project: https://github.com/systemd/systemd.
+
+systemd-stub is part of systemd, licensed under the GNU Lesser General
+Public License, version 2.1 or later (LGPL-2.1-or-later). The full
+license text is in internal/uki/stubs/LICENSE.LGPL-2.1. The corresponding
+source is the Debian source package linked above.
+
+contemper links these binaries into a Unified Kernel Image at conversion
+time by appending PE sections; it does not modify the stub's own code.
+See hack/fetch-stubs.sh for how they were obtained, and
+internal/uki/stubs/SHA256SUMS for their checksums.

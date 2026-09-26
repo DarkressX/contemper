@@ -1,0 +1,56 @@
+# Minimal contemper-ready Alpine appliance: a kernel, a generic initrd,
+# a cmdline, OpenRC as init, and a boot-completion marker on the serial
+# console, so this image can be booted end-to-end without any further
+# configuration. See ../../README.md for the fixed-path contract this
+# satisfies.
+FROM alpine:3.22
+
+LABEL io.contemper.ready="true"
+
+ARG TARGETARCH
+
+# busybox-mdev-openrc provides the mdev service (openrc alone does not);
+# e2fsprogs gives the boot-time fsck of the root filesystem its fsck.ext4.
+RUN apk add --no-cache linux-virt openrc busybox-mdev-openrc mkinitfs e2fsprogs
+
+# Generic (not host-only) initrd at the fixed contemper path, covering
+# the virtio block/net/scsi drivers a qemu-booted VM needs.
+RUN kver="$(basename "$(find /lib/modules -mindepth 1 -maxdepth 1 -type d)")" && \
+    mkdir -p /boot/contemper && \
+    mkinitfs -F "base ext4 virtio scsi" -o /boot/contemper/initrd "$kver"
+
+# The kernel itself, at the fixed contemper path.
+RUN ln -sf ../vmlinuz-virt /boot/contemper/vmlinuz
+
+# The cmdline depends on which serial console the target architecture's
+# virt machine exposes.
+RUN case "$TARGETARCH" in \
+      arm64) console=ttyAMA0 ;; \
+      amd64) console=ttyS0 ;; \
+      *) echo "examples/alpine: unsupported TARGETARCH '$TARGETARCH'" >&2; exit 1 ;; \
+    esac && \
+    echo "root=LABEL=contemper-root rootfstype=ext4 modules=ext4 rw console=${console}" > /boot/contemper/cmdline && \
+    echo "${console}::respawn:/sbin/getty -L ${console} 115200 vt100" >> /etc/inittab
+
+RUN echo 'LABEL=contemper-root / ext4 rw,relatime 0 1' >> /etc/fstab
+
+# Standard OpenRC runlevels for a minimal, non-networked appliance.
+RUN rc-update add devfs sysinit && \
+    rc-update add dmesg sysinit && \
+    rc-update add mdev sysinit && \
+    rc-update add hwdrivers sysinit && \
+    rc-update add modules boot && \
+    rc-update add sysctl boot && \
+    rc-update add hostname boot && \
+    rc-update add bootmisc boot && \
+    rc-update add local default
+
+# Passwordless root, for interactive testing over the serial console.
+RUN passwd -d root
+
+# Proof-of-boot marker: printed to the serial console once OpenRC's
+# "local" runlevel runs, which is what `contemper deploy --expect` waits
+# for in hack/e2e.sh.
+RUN mkdir -p /etc/local.d && \
+    printf '#!/bin/sh\necho contemper-boot-ok > /dev/console\n' > /etc/local.d/contemper.start && \
+    chmod +x /etc/local.d/contemper.start
