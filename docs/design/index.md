@@ -51,10 +51,14 @@ the step, not how much work the step is. mkosi runs a distro installer
 to do it; distrobuilder runs a package manager; contemper is
 `RUN apk add linux-virt openrc` in a build file.
 
-The contrast that makes this feel sharper than it is comes from tools
-like Packer and virt-builder, which start from an existing cloud image
-that already had a kernel installed by whoever built it. Their users
-never perform this step. bootc's users don't either, because its base
+The contrast that makes this feel sharper than it is comes from
+workflows that start from an existing image: Packer building from a
+cloud image or AMI, and virt-builder, both starting from an image that
+already had a kernel installed by whoever built it. Their users never
+perform this step. (Packer can also drive a full install from an ISO,
+the same step contemper's authors do with their own package manager;
+the contrast is with the cloud-image workflow, not with Packer as a
+tool.) bootc's users don't perform this step either, because its base
 images have had it done for them. contemper sits with mkosi and
 distrobuilder: you install the kernel, because you are building an OS
 rather than customizing one that already exists.

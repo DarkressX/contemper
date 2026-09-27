@@ -67,10 +67,12 @@ disk. And bootc gives host-style semantics (`/usr` read-only, `/etc` and
 writable root kept across reboots and replaced on redeploy, with
 persistent data on volumes.
 
-Packer and virt-builder customize an existing cloud image by running
-code; mkosi and distrobuilder build from packages through their own
-config formats. contemper's input is whatever your container tooling
-already produces. More in [docs/comparison.md](docs/comparison.md).
+Packer and virt-builder, in their common cloud-image workflow, customize
+an existing image by running code (Packer can also install a full OS
+from an ISO); mkosi and distrobuilder build from packages through their
+own config formats. contemper's input is whatever your container
+tooling already produces. More in
+[docs/comparison.md](docs/comparison.md).
 
 ## Status
 

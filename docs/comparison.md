@@ -30,10 +30,12 @@ backing. It differs in three ways that matter:
 
 ## The others
 
-- **Packer and virt-builder** start from an existing image that already
-  has a kernel installed, and customize it by running code, either by
-  booting an instance or through libguestfs. contemper builds the OS
-  from your container build instead and runs nothing at conversion time.
+- **Packer and virt-builder**, in their common cloud-image workflow,
+  start from an existing image that already has a kernel installed, and
+  customize it by running code, either by booting an instance or through
+  libguestfs. (Packer can also drive a full install from an ISO, which
+  installs the kernel itself.) contemper builds the OS from your
+  container build instead and runs nothing at conversion time.
 - **mkosi and distrobuilder** also build an OS from packages, as contemper
   does, but through their own configuration formats and by running
   distro installers. contemper's input is whatever your container tooling
