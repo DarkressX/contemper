@@ -32,6 +32,7 @@ var debugfsErrorMarkers = []string{
 	"Could not allocate",
 	"already exists",
 	"Filename too long",
+	"ea_set:",
 }
 
 // Ext4Options configures PopulateExt4.
@@ -47,7 +48,7 @@ type Ext4Options struct {
 
 // PopulateExt4 creates an ext4 image at imgPath, sized and labeled per
 // opts, and populates it from rfs. It returns non-fatal warnings (e.g.
-// "xattrs were skipped").
+// unsupported tar entry types).
 func PopulateExt4(rfs *rootfs.Rootfs, imgPath string, opts Ext4Options) ([]string, error) {
 	mkfsPath, err := hostenv.Required("mkfs.ext4")
 	if err != nil {
@@ -147,15 +148,37 @@ func modeBits(hdr *tar.Header) uint32 {
 	return typeBits | perm
 }
 
-// hasXattrs reports whether hdr carries any SCHILY.xattr.* PAX record,
-// the convention GNU tar (and Go's archive/tar) uses for xattrs.
-func hasXattrs(hdr *tar.Header) bool {
-	for k := range hdr.PAXRecords {
-		if strings.HasPrefix(k, "SCHILY.xattr.") {
-			return true
+// xattrSchilyPrefix is the PAX record namespace GNU tar (and Go's
+// archive/tar) uses for extended attributes: a record
+// "SCHILY.xattr.user.foo" = "bar" represents the xattr "user.foo" with
+// value "bar".
+const xattrSchilyPrefix = "SCHILY.xattr."
+
+// xattrs returns hdr's extended attributes keyed by their bare name
+// (the "SCHILY.xattr." prefix stripped). It merges both PAXRecords, the
+// field archive/tar documents callers should use, and the older,
+// deprecated Xattrs field, which archive/tar's Reader populates
+// alongside PAXRecords from the same records but which some other tar
+// producers may set on its own.
+func xattrs(hdr *tar.Header) map[string]string {
+	var attrs map[string]string
+	for k, v := range hdr.PAXRecords {
+		name, ok := strings.CutPrefix(k, xattrSchilyPrefix)
+		if !ok {
+			continue
 		}
+		if attrs == nil {
+			attrs = map[string]string{}
+		}
+		attrs[name] = v
 	}
-	return false
+	for k, v := range hdr.Xattrs { //nolint:staticcheck // fallback for tar producers that only set the deprecated field
+		if attrs == nil {
+			attrs = map[string]string{}
+		}
+		attrs[k] = v
+	}
+	return attrs
 }
 
 // buildDebugfsScript writes every regular file's content under
@@ -186,8 +209,8 @@ func buildDebugfsScript(rfs *rootfs.Rootfs, payloadDir string, stage *progress.S
 
 	var b strings.Builder
 	var warnings []string
-	warnedXattrs := false
 	fileN := 0
+	xattrN := 0
 
 	// Hardlinks are emitted in a second pass, after every other entry
 	// (in particular, every regular file that might be a hardlink's
@@ -201,11 +224,6 @@ func buildDebugfsScript(rfs *rootfs.Rootfs, payloadDir string, stage *progress.S
 		e := rfs.Index[p]
 		hdr := e.Header
 
-		if !warnedXattrs && hasXattrs(hdr) {
-			warnings = append(warnings, "one or more files carry extended attributes; contemper does not preserve xattrs in the ext4 root")
-			warnedXattrs = true
-		}
-
 		qp, err := quoteArg(p)
 		if err != nil {
 			return "", nil, fmt.Errorf("%s: %w", p, err)
@@ -215,6 +233,9 @@ func buildDebugfsScript(rfs *rootfs.Rootfs, payloadDir string, stage *progress.S
 		case tar.TypeDir:
 			fmt.Fprintf(&b, "mkdir %s\n", qp)
 			writeAttrs(&b, qp, hdr)
+			if err := writeXattrs(&b, payloadDir, &xattrN, qp, hdr); err != nil {
+				return "", nil, fmt.Errorf("%s: %w", p, err)
+			}
 
 		case tar.TypeReg:
 			hostPath, err := writePayload(rfs, e, payloadDir, fileN)
@@ -228,6 +249,9 @@ func buildDebugfsScript(rfs *rootfs.Rootfs, payloadDir string, stage *progress.S
 			}
 			fmt.Fprintf(&b, "write %s %s\n", qh, qp)
 			writeAttrs(&b, qp, hdr)
+			if err := writeXattrs(&b, payloadDir, &xattrN, qp, hdr); err != nil {
+				return "", nil, fmt.Errorf("%s: %w", p, err)
+			}
 
 		case tar.TypeSymlink:
 			qt, err := quoteArg(hdr.Linkname)
@@ -236,6 +260,9 @@ func buildDebugfsScript(rfs *rootfs.Rootfs, payloadDir string, stage *progress.S
 			}
 			fmt.Fprintf(&b, "symlink %s %s\n", qp, qt)
 			writeAttrs(&b, qp, hdr)
+			if err := writeXattrs(&b, payloadDir, &xattrN, qp, hdr); err != nil {
+				return "", nil, fmt.Errorf("%s: %w", p, err)
+			}
 
 		case tar.TypeLink:
 			target := normalize(hdr.Linkname)
@@ -298,6 +325,45 @@ func writeAttrs(b *strings.Builder, quotedPath string, hdr *tar.Header) {
 	fmt.Fprintf(b, "sif %s uid %d\n", quotedPath, hdr.Uid)
 	fmt.Fprintf(b, "sif %s gid %d\n", quotedPath, hdr.Gid)
 	fmt.Fprintf(b, "sif %s mtime %d\n", quotedPath, hdr.ModTime.Unix())
+}
+
+// writeXattrs appends one "ea_set -f <value-file> <path> <name>" debugfs
+// command per extended attribute on hdr, so file capabilities
+// (security.capability) and SELinux labels (security.selinux) survive
+// into the ext4 root, not just mode/uid/gid/mtime. Values are arbitrary
+// bytes (security.capability is binary), and a debugfs script has no
+// escape sequence for that, so each value is written to its own file
+// under payloadDir and passed via "-f" rather than inlined. *xattrN
+// numbers those files, distinct from writePayload's regular-file
+// content numbering.
+func writeXattrs(b *strings.Builder, payloadDir string, xattrN *int, quotedPath string, hdr *tar.Header) error {
+	attrs := xattrs(hdr)
+	if len(attrs) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(attrs))
+	for name := range attrs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		hostPath := path.Join(payloadDir, fmt.Sprintf("x%06d", *xattrN))
+		*xattrN++
+		if err := os.WriteFile(hostPath, []byte(attrs[name]), 0o600); err != nil {
+			return fmt.Errorf("xattr %s: writing value payload: %w", name, err)
+		}
+		qh, err := quoteArg(hostPath)
+		if err != nil {
+			return err
+		}
+		qn, err := quoteArg(name)
+		if err != nil {
+			return fmt.Errorf("xattr %s: %w", name, err)
+		}
+		fmt.Fprintf(b, "ea_set -f %s %s %s\n", qh, quotedPath, qn)
+	}
+	return nil
 }
 
 // writePayload copies a regular file's content to payloadDir under an

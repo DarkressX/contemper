@@ -23,6 +23,10 @@ type File struct {
 	Data               []byte
 	Linkname           string
 	Devmajor, Devminor int64
+	// Xattrs, if non-nil, is written as "SCHILY.xattr.<name>" PAX
+	// records, the convention GNU tar and Go's archive/tar use for
+	// extended attributes.
+	Xattrs map[string]string
 }
 
 var epoch = time.Unix(0, 0)
@@ -56,6 +60,13 @@ func Layer(files []File) (v1.Layer, error) {
 			Devminor: f.Devminor,
 			Size:     int64(len(f.Data)),
 			ModTime:  epoch,
+		}
+		if len(f.Xattrs) > 0 {
+			hdr.Format = tar.FormatPAX
+			hdr.PAXRecords = make(map[string]string, len(f.Xattrs))
+			for name, value := range f.Xattrs {
+				hdr.PAXRecords["SCHILY.xattr."+name] = value
+			}
 		}
 		if err := tw.WriteHeader(hdr); err != nil {
 			return nil, err
