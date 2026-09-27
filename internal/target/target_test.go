@@ -33,6 +33,19 @@ func TestResolve(t *testing.T) {
 	}
 }
 
+func TestKernelCmdline(t *testing.T) {
+	for author, want := range map[string]string{
+		"console=ttyAMA0 rw":          "root=LABEL=contemper-root console=ttyAMA0 rw",
+		"  console=ttyS0\n":           "root=LABEL=contemper-root console=ttyS0",
+		"root=/dev/vda2 console=hvc0": "root=LABEL=contemper-root root=/dev/vda2 console=hvc0",
+		"":                            "root=LABEL=contemper-root",
+	} {
+		if got := target.KernelCmdline(author); got != want {
+			t.Errorf("KernelCmdline(%q) = %q, want %q", author, got, want)
+		}
+	}
+}
+
 func syntheticRootfs(t *testing.T) (*rootfs.Rootfs, *validate.Result) {
 	t.Helper()
 	for _, name := range []string{"mkfs.ext4", "debugfs", "e2fsck"} {
@@ -46,7 +59,7 @@ func syntheticRootfs(t *testing.T) (*rootfs.Rootfs, *validate.Result) {
 		{Path: "boot/contemper/", Typeflag: tar.TypeDir},
 		{Path: "boot/contemper/vmlinuz", Data: append([]byte("MZ"), make([]byte, 128)...)},
 		{Path: "boot/contemper/initrd", Data: []byte("fake-initrd-content")},
-		{Path: "boot/contemper/cmdline", Data: []byte("root=LABEL=contemper-root rw\n")},
+		{Path: "boot/contemper/cmdline", Data: []byte("rw console=ttyS0\n")},
 		{Path: "sbin/", Typeflag: tar.TypeDir},
 		{Path: "sbin/init", Data: []byte("#!/bin/sh\n"), Mode: 0o755},
 		{Path: "etc/", Typeflag: tar.TypeDir},

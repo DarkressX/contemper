@@ -12,6 +12,10 @@ Two partitions on a GPT disk, 1 MiB-aligned:
 The UKI sits at the UEFI fallback path for the architecture, so the
 firmware finds it without any boot entry being registered on the host.
 
+contemper adds `root=LABEL=contemper-root` to the front of the kernel
+command line, so the kernel finds the root partition without the image
+having to know about the disk layout.
+
 The root comes last, so growing it is the ordinary `growpart` plus
 `resize2fs` operation any cloud image uses. No special configuration,
 no union filesystem, nothing for your initrd to assemble: the kernel

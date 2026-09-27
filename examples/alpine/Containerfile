@@ -29,7 +29,7 @@ RUN case "$TARGETARCH" in \
       amd64) console=ttyS0 ;; \
       *) echo "examples/alpine: unsupported TARGETARCH '$TARGETARCH'" >&2; exit 1 ;; \
     esac && \
-    echo "root=LABEL=contemper-root rootfstype=ext4 modules=ext4 rw console=${console}" > /boot/contemper/cmdline && \
+    echo "rootfstype=ext4 modules=ext4 rw console=${console}" > /boot/contemper/cmdline && \
     echo "${console}::respawn:/sbin/getty -L ${console} 115200 vt100" >> /etc/inittab
 
 RUN echo 'LABEL=contemper-root / ext4 rw,relatime 0 1' >> /etc/fstab

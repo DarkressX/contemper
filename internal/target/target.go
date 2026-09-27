@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/contemper-project/contemper/internal/disk"
 	"github.com/contemper-project/contemper/internal/hostenv"
@@ -45,6 +46,19 @@ type Options struct {
 // it can be tested against a synthetic rootfs.
 type Assembler interface {
 	Assemble(rfs *rootfs.Rootfs, val *validate.Result, arch string, outDir string, opts Options) (*DiskInfo, []string, error)
+}
+
+// RootLabel is the filesystem label contemper gives the root partition.
+const RootLabel = "contemper-root"
+
+// KernelCmdline returns the command line sealed into the UKI: contemper's
+// own root= for the partition it creates, followed by the author's
+// command line. Because the author's part comes last, a root= of their
+// own takes precedence (the kernel and common initramfs implementations
+// use the last occurrence). Resolving LABEL= is done by the initrd, which
+// the fixed-path contract requires anyway.
+func KernelCmdline(author string) string {
+	return strings.TrimSpace("root=LABEL=" + RootLabel + " " + strings.TrimSpace(author))
 }
 
 // table maps every accepted spelling (aliases and canonical names alike)
@@ -88,7 +102,7 @@ func (UEFIQcow2) Assemble(rfs *rootfs.Rootfs, val *validate.Result, arch string,
 
 	ukiBytes, err := uki.Build(arch, uki.Sections{
 		OSRelease: val.OSRelease,
-		Cmdline:   []byte(val.Cmdline),
+		Cmdline:   []byte(KernelCmdline(val.Cmdline)),
 		Initrd:    val.Initrd,
 		Linux:     linuxData,
 	})
@@ -117,7 +131,7 @@ func (UEFIQcow2) Assemble(rfs *rootfs.Rootfs, val *validate.Result, arch string,
 
 	rootImgPath := filepath.Join(workDir, "root.img")
 	ext4Warnings, err := disk.PopulateExt4(rfs, rootImgPath, disk.Ext4Options{
-		Label:     "contemper-root",
+		Label:     RootLabel,
 		SizeBytes: rootSize,
 		Progress:  rep,
 		Stage:     stage,

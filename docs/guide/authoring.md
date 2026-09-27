@@ -53,14 +53,26 @@ never on the host, with a hop limit and clamping at `/`.
 
 The kernel command line is the one input with no counterpart in a
 conventional install. There's no bootloader installer to generate one
-for you, and the boot image seals in what you write. Point the root at
-the root partition's label:
+for you, and the boot image seals in what you write.
+
+You don't need to point the kernel at the root partition: contemper
+creates that partition, labels it `contemper-root`, and puts
+`root=LABEL=contemper-root` in front of your command line. Write the
+rest, for example:
 
 ```text
-root=LABEL=contemper-root rootfstype=ext4 rw console=ttyAMA0
+rootfstype=ext4 rw console=ttyAMA0
 ```
 
-Use `console=ttyS0` on x86-64.
+Use `console=ttyS0` on x86-64. Your part comes after contemper's, so a
+`root=` of your own takes precedence. Resolving `LABEL=` is done by the
+initrd; every common initrd generator (dracut, initramfs-tools,
+mkinitcpio, Alpine's mkinitfs) supports it. Refer to the same label in
+`/etc/fstab`:
+
+```text
+LABEL=contemper-root / ext4 rw,relatime 0 1
+```
 
 ## Marking the image ready
 
