@@ -1,6 +1,6 @@
 // Package validate checks the merged rootfs against contemper's fixed
-// path contract: a kernel, an initrd and a non-empty command line at a
-// fixed location, and an init binary.
+// path contract: a kernel, an initrd and an init binary, plus an
+// optional command line, at fixed locations.
 package validate
 
 import (
@@ -39,13 +39,13 @@ func Validate(rfs *rootfs.Rootfs) (*Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("initrd: %w", err)
 	}
-	cmdlineRaw, err := rfs.ReadFile(CmdlinePath)
-	if err != nil {
-		return nil, fmt.Errorf("cmdline: %w", err)
-	}
-	cmdline := strings.TrimSpace(string(cmdlineRaw))
-	if cmdline == "" {
-		return nil, fmt.Errorf("cmdline: %s is empty", CmdlinePath)
+	var cmdline string
+	if _, ok := rfs.Lookup(CmdlinePath); ok {
+		cmdlineRaw, err := rfs.ReadFile(CmdlinePath)
+		if err != nil {
+			return nil, fmt.Errorf("cmdline: %w", err)
+		}
+		cmdline = strings.TrimSpace(string(cmdlineRaw))
 	}
 
 	if _, err := rfs.Resolve(InitPath); err != nil {

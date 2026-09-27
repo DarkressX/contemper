@@ -31,10 +31,12 @@ custom container image.
 ## How it works
 
 - **You author, contemper packages.** Your image installs a kernel, a
-  generic initrd, a kernel command line and an init system at
-  [fixed paths](docs/guide/authoring.md#the-fixed-path-contract), and is
-  marked with `LABEL io.contemper.ready="true"`. contemper checks the
-  label before pulling any layers.
+  generic initrd and an init system at
+  [fixed paths](docs/guide/authoring.md#the-fixed-path-contract) (a
+  kernel command line there too, optionally, for parameters beyond what
+  contemper sets itself), and is marked with
+  `LABEL io.contemper.ready="true"`. contemper checks the label before
+  pulling any layers.
 - **Nothing from your image runs at conversion time.** contemper merges
   layers and reads files; it never executes image content. No container
   runtime, no privileged builder, no emulation: an arm64 disk builds on

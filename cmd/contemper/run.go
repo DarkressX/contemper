@@ -246,7 +246,11 @@ func reportFixedPaths(rep *progress.Reporter, rfs *rootfs.Rootfs, val *validate.
 	}
 	reportOne(validate.KernelPath, int64(len(val.Kernel)))
 	reportOne(validate.InitrdPath, int64(len(val.Initrd)))
-	rep.Sub("✔", validate.CmdlinePath, strconv.Quote(val.Cmdline))
+	if val.Cmdline != "" {
+		rep.Sub("✔", validate.CmdlinePath, strconv.Quote(val.Cmdline))
+	} else {
+		rep.Sub("✔", validate.CmdlinePath, "(optional, not set)")
+	}
 	rep.Sub("└", "kernel command line", strconv.Quote(target.KernelCmdline(val.Cmdline)))
 	rep.Sub("✔", validate.InitPath, "")
 	if val.OSRelease != nil {

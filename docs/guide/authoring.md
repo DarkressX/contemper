@@ -36,14 +36,14 @@ Three clarifications:
 
 ## The fixed-path contract
 
-Kernel, initrd and command line go at fixed paths, the same for every
-target:
+Kernel, initrd and an optional command line go at fixed paths, the same
+for every target:
 
 | Path | Meaning |
 | --- | --- |
 | `/boot/contemper/vmlinuz` | the kernel |
 | `/boot/contemper/initrd` | the initrd (generic, not host-only) |
-| `/boot/contemper/cmdline` | the kernel command line (must be non-empty after trimming whitespace) |
+| `/boot/contemper/cmdline` | optional; extra kernel command line parameters, e.g. `console=` |
 | `/sbin/init` | must exist |
 | `/etc/os-release` | optional; if present, embedded in the boot image |
 
@@ -51,14 +51,13 @@ Symlinks are fine: `/boot/contemper/vmlinuz → ../vmlinuz-virt` is how
 the example does it. They are resolved inside the image's filesystem,
 never on the host, with a hop limit and clamping at `/`.
 
-The kernel command line is the one input with no counterpart in a
-conventional install. There's no bootloader installer to generate one
-for you, and the boot image seals in what you write.
-
-You don't need to point the kernel at the root partition: contemper
-creates that partition, labels it `contemper-root`, and puts
-`root=LABEL=contemper-root` in front of your command line. Write the
-rest, for example:
+The cmdline file is optional, and so is anything in it: contemper
+always writes `root=LABEL=contemper-root` at the front of the kernel
+command line, since it creates that partition itself and labels it
+`contemper-root`. There's no bootloader installer to generate the rest
+for you, so leave the file out, or leave it blank, unless you have
+parameters to add beyond `root=` — extra options such as `console=`,
+for example:
 
 ```text
 rootfstype=ext4 rw console=ttyAMA0

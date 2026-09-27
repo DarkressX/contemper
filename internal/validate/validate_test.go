@@ -91,7 +91,26 @@ func TestValidateMissingInit(t *testing.T) {
 	}
 }
 
-func TestValidateEmptyCmdline(t *testing.T) {
+func TestValidateMissingCmdline(t *testing.T) {
+	files := completeLayer()
+	var without []imgtest.File
+	for _, f := range files {
+		if f.Path == "boot/contemper/cmdline" {
+			continue
+		}
+		without = append(without, f)
+	}
+	rfs := build(t, without)
+	res, err := validate.Validate(rfs)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if res.Cmdline != "" {
+		t.Errorf("Cmdline = %q, want empty for a missing cmdline file", res.Cmdline)
+	}
+}
+
+func TestValidateBlankCmdline(t *testing.T) {
 	files := completeLayer()
 	for i, f := range files {
 		if f.Path == "boot/contemper/cmdline" {
@@ -99,8 +118,12 @@ func TestValidateEmptyCmdline(t *testing.T) {
 		}
 	}
 	rfs := build(t, files)
-	if _, err := validate.Validate(rfs); err == nil {
-		t.Fatalf("expected an error for a blank cmdline")
+	res, err := validate.Validate(rfs)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if res.Cmdline != "" {
+		t.Errorf("Cmdline = %q, want empty for a blank cmdline file", res.Cmdline)
 	}
 }
 
