@@ -14,6 +14,8 @@ What exists, and the rough shape of what's left before a v1.
 - [x] `qemu` and `incus` targets with aliases
 - [x] Bundle manifest
 - [x] `deploy --to local-qemu`, with boot tests in CI
+- [x] Preserve extended attributes and file capabilities in the root
+      filesystem
 
 ## Next
 
@@ -26,5 +28,3 @@ What exists, and the rough shape of what's left before a v1.
 - [ ] Resolve the deployment and volume questions
 - [ ] Tool vendoring strategy for release builds
 - [ ] Decide on blessed base images
-- [ ] Preserve extended attributes and file capabilities in the root
-      filesystem
